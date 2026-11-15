@@ -2,21 +2,13 @@ name: Python Order Service CI
 
 on:
   push:
-    paths:
-      - 'DidurOrder/**'
-      - '.github/workflows/python-ci.yml'
+    branches: [ main, PytonsStoreDidurOrder, feature/*, fix/* ]
   pull_request:
-    paths:
-      - 'DidurOrder/**'
-      - '.github/workflows/python-ci.yml'
+    branches: [ main ]
 
 jobs:
   test-python:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: DidurOrder
 
     steps:
       - name: Checkout repository
@@ -33,4 +25,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Tests with Pytest
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test.db"
         run: pytest
