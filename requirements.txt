@@ -1,8 +1,11 @@
 fastapi
 uvicorn
-requests
-requests-mock
-pytest
-httpx
 pydantic
 sqlalchemy
+aiomysql
+databases
+requests
+pytest
+pytest-cov
+requests-mock
+httpx
