@@ -1,82 +1,102 @@
-import os
 import requests
-from datetime import date, timedelta
 from fastapi import FastAPI, HTTPException, status
+from typing import List
 from pydantic import BaseModel
-from typing import List, Dict
+from database import database, orders, order_items
 
-app = FastAPI()
 
-PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8080/products")
-
-# Хранилище заказов в памяти
-orders: Dict[int, dict] = {}
-order_id_counter = 0
-
-class OrderItem(BaseModel):
+# --- Моделі Pydantic (контракт API) ---
+class OrderItemPayload(BaseModel):
     product_id: int
     quantity: int
 
-class OrderRequest(BaseModel):
-    items: List[OrderItem]
+
+class OrderItemResponse(OrderItemPayload):
+    id: int
+    order_id: int
+
 
 class OrderResponse(BaseModel):
     id: int
     total_amount: float
-    items: List[OrderItem]
-    deliveryDate: str
+    items: List[OrderItemResponse]
 
-@app.get("/orders", response_model=List[OrderResponse])
-def get_all_orders():
-    return list(orders.values())
 
-@app.get("/orders/{order_id}", response_model=OrderResponse)
-def get_order_by_id(order_id: int):
-    if order_id not in orders:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found"
-        )
-    return orders[order_id]
+app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup():
+    await database.connect()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+
+
+PRODUCT_SERVICE_URL = "http://localhost:8080/products"
+
 
 @app.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
-def create_order(order_req: OrderRequest):
+async def create_order(order_items_payload: List[OrderItemPayload]):
     total_amount = 0.0
 
-    for item in order_req.items:
+    for item in order_items_payload:
         try:
-            response = requests.get(f"{PRODUCT_SERVICE_URL}/{item.product_id}", timeout=3.0)
+            response = requests.get(f"{PRODUCT_SERVICE_URL}/{item.product_id}")
+            if response.status_code == 200:
+                product_data = response.json()
+                total_amount += product_data["price"] * item.quantity
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Product with id {item.product_id} not found."
+                )
         except requests.exceptions.RequestException:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Product Catalog service is unavailable"
+                detail="Cannot connect to Product service."
             )
 
-        if response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Product with id {item.product_id} does not exist"
-            )
-        elif response.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Error response from Product Catalog service"
-            )
+    query = orders.insert().values(total_amount=total_amount)
+    last_record_id = await database.execute(query)
 
-        product_data = response.json()
-        total_amount += product_data["price"] * item.quantity
+    items_to_insert = [
+        {
+            "order_id": last_record_id,
+            "product_id": item.product_id,
+            "quantity": item.quantity,
+        }
+        for item in order_items_payload
+    ]
 
-    global order_id_counter
-    order_id_counter += 1
-    new_id = order_id_counter
+    query = order_items.insert().values(items_to_insert)
+    await database.execute(query)
 
-    delivery_date = (date.today() + timedelta(days=5)).isoformat()
+    # Отримуємо щойно створені items для відповіді
+    query = order_items.select().where(order_items.c.order_id == last_record_id)
+    created_items = await database.fetch_all(query)
 
-    new_order = OrderResponse(
-        id=new_id,
-        total_amount=round(total_amount, 2),
-        items=order_req.items,
-        deliveryDate=delivery_date
-    )
-    orders[new_id] = new_order.dict()
-    return new_order
+    return {
+        "id": last_record_id,
+        "total_amount": total_amount,
+        "items": created_items,
+    }
+
+
+@app.get("/orders", response_model=List[OrderResponse])
+async def get_all_orders():
+    query = orders.select()
+    all_orders = await database.fetch_all(query)
+
+    results = []
+    for order in all_orders:
+        query = order_items.select().where(order_items.c.order_id == order.id)
+        items = await database.fetch_all(query)
+        results.append({
+            "id": order.id,
+            "total_amount": order.total_amount,
+            "items": items,
+        })
+    return results
