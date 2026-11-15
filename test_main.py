@@ -16,10 +16,24 @@ def mock_db(monkeypatch):
     async def mock_execute(query):
         return 1  # Повертаємо фейковий id останнього запису
 
+    # Створюємо простий клас, щоб поля можна було викликати через крапку (order.id)
+    class FakeRecord(dict):
+        def __getattr__(self, key):
+            try:
+                return self[key]
+            except KeyError:
+                raise AttributeError(f"'FakeRecord' object has no attribute '{key}'")
+
     async def mock_fetch_all(query):
+        # Якщо запит йде до таблиці orders
+        if "orders" in str(query):
+            return [
+                FakeRecord({"id": 1, "total_amount": 2800.50})
+            ]
+        # Якщо запит йде до таблиці order_items
         return [
-            {"id": 1, "order_id": 1, "product_id": 1, "quantity": 1},
-            {"id": 2, "order_id": 1, "product_id": 2, "quantity": 2}
+            FakeRecord({"id": 1, "order_id": 1, "product_id": 1, "quantity": 1}),
+            FakeRecord({"id": 2, "order_id": 1, "product_id": 2, "quantity": 2})
         ]
 
     monkeypatch.setattr(database, "connect", mock_connect)
