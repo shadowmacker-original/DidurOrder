@@ -1,11 +1,8 @@
-import os
 import sqlalchemy
 from databases import Database
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+aiomysql://root:1337_Svaga1337@localhost:3306/microservices_db"
-)
+# URL для підключення. Замініть 'your_password' на ваш пароль.
+DATABASE_URL = "mysql+aiomysql://root:1337_Svaga1337@localhost:3306/microservices_db"
 
 database = Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
@@ -27,7 +24,3 @@ order_items = sqlalchemy.Table(
     sqlalchemy.Column("quantity", sqlalchemy.Integer),
 )
 
-if DATABASE_URL.startswith("sqlite"):
-    sync_url = DATABASE_URL.replace("+aiosqlite", "")
-    engine = sqlalchemy.create_engine(sync_url, connect_args={"check_same_thread": False})
-    metadata.create_all(engine)
